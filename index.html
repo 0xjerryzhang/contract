@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>合同卫士 Pro - 支持PDF/Word/Txt</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PDF.js (用于解析 PDF) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        // 设置 PDF Worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+
+    <!-- Mammoth.js (用于解析 Word .docx) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    
+    <!-- Import Map for React & Lucide Icons -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.263.1"
+      }
+    }
+    </script>
+    
+    <!-- Babel for JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            FileText, Upload, Search, DollarSign, Sparkles, 
+            AlertTriangle, CheckCircle, XCircle, ArrowRight, 
+            RefreshCw, FileSearch, ShieldCheck, FileType, AlertCircle
+        } from 'lucide-react';
+
+        // --- 核心解析逻辑 ---
+
+        // 解析 PDF
+        const readPdfFile = async (file) => {
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+            const pdf = await loadingTask.promise;
+            let fullText = '';
+            
+            // 遍历每一页提取文本
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                fullText += pageText + '\n';
+            }
+            return fullText;
+        };
+
+        // 解析 Word (.docx)
+        const readWordFile = async (file) => {
+            const arrayBuffer = await file.arrayBuffer();
+            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            return result.value;
+        };
+
+        // 解析 Txt
+        const readTextFile = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = (e) => reject(e);
+                reader.readAsText(file);
+            });
+        };
+
+        // --- 模拟算法数据 ---
+        
+        const TYPO_DATABASE = [
+            { pattern: /的的/g, suggestion: '的', type: '重复用词' },
+            { pattern: /拟定/g, suggestion: '制定', type: '用词不当' },
+            { pattern: /权力/g, context: '义务', suggestion: '权利', type: '法律用词错误' },
+            { pattern: /订金/g, suggestion: '定金', type: '法律风险' },
+            { pattern: /截止/g, suggestion: '截至', type: '时间用词' },
+        ];
+
+        const OPTIMIZATION_RULES = [
+            { keyword: '不可抗力', required: true, message: '未检测到“不可抗力”条款，建议补充以规避意外风险。' },
+            { keyword: '违约责任', required: true, message: '合同中缺少明确的“违约责任”界定，建议详细列出。' },
+            { keyword: '争议解决', required: true, message: '建议明确“争议解决”方式（如仲裁或诉讼管辖地）。' },
+            { keyword: '保密', required: false, message: '如果涉及商业机密，建议增加“保密条款”。' },
+        ];
+
+        const AMOUNT_REGEX = /([0-9]{1,3}(,[0-9]{3})*(\.[0-9]+)?|[0-9]+)(\s?)(元|万元|亿元)?/g;
+        const CN_AMOUNT_REGEX = /[零壹贰叁肆伍陆柒捌玖拾佰仟万亿]+圆?整?/g;
+
+        const SAMPLE_CONTRACT = `
+合同编号：2024-HT-DEMO
+
+甲方：未来科技有限公司
+乙方：诚信服务有限公司
+
+一、合作内容
+甲乙双方本着平等互利的原则，经友好协商，就甲方委托乙方开发软件系统事宜达成如下协议。
+
+二、合同金额
+1. 本合同总金额为人民币 50,000.00元（大写：伍万元整）。
+2. 甲方应于合同签订后支付预付款 20000元。
+3. 项目验收合格后，支付尾款 30,000.00元。
+
+三、双方权力与义务
+1. 甲方拥有项目的知识产权。
+2. 乙方需按时交付，不得延误。
+3. 这里的的文字是多余的，用于测试重复字检测。
+4. 乙方收取的订金不予退还。
+
+四、其他
+本合同有效期一年，截止2024年12月31日。
+`;
+
+        // --- UI 组件 ---
+
+        const FeatureCard = ({ title, icon: Icon, active, onClick, description }) => (
+            <div 
+                onClick={onClick}
+                className={`p-4 rounded-xl border cursor-pointer transition-all duration-200 flex flex-col gap-2 ${
+                    active 
+                        ? 'bg-blue-50 border-blue-500 shadow-md ring-1 ring-blue-500' 
+                        : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                }`}
+            >
+                <div className="flex items-center justify-between">
+                    <div className={`p-2 rounded-lg ${active ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                        <Icon size={20} />
+                    </div>
+                    {active && <span className="text-xs font-bold text-blue-600 px-2 py-1 bg-blue-100 rounded-full">当前模式</span>}
+                </div>
+                <div>
+                    <h3 className={`font-bold ${active ? 'text-blue-900' : 'text-gray-800'}`}>{title}</h3>
+                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">{description}</p>
+                </div>
+            </div>
+        );
+
+        const AlertBox = ({ type, title, children }) => {
+            const styles = {
+                warning: 'bg-orange-50 border-orange-200 text-orange-800',
+                success: 'bg-green-50 border-green-200 text-green-800',
+                info: 'bg-blue-50 border-blue-200 text-blue-800',
+                danger: 'bg-red-50 border-red-200 text-red-800',
+            };
+            const icons = {
+                warning: AlertTriangle,
+                success: CheckCircle,
+                info: FileSearch,
+                danger: XCircle
+            };
+            
+            const Icon = icons[type] || FileSearch;
+            const currentStyle = styles[type] || styles.info;
+
+            return (
+                <div className={`p-4 rounded-lg border ${currentStyle} mb-3 text-sm animate-fade-in`}>
+                    <div className="font-bold flex items-center gap-2 mb-1">
+                        <Icon size={16} />
+                        {title}
+                    </div>
+                    <div className="opacity-90 leading-relaxed ml-6">{children}</div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('upload'); 
+            const [fileName, setFileName] = useState('');
+            const [fileType, setFileType] = useState('');
+            const [content, setContent] = useState('');
+            const [analysisResults, setAnalysisResults] = useState(null);
+            const [targetAmount, setTargetAmount] = useState('');
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [processStatus, setProcessStatus] = useState(''); // 用于显示 "正在解析PDF..." 等状态
+
+            const handleFileUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                setFileName(file.name);
+                setIsProcessing(true);
+                setProcessStatus('正在读取文件...');
+                setAnalysisResults(null);
+
+                try {
+                    let text = '';
+                    const lowerName = file.name.toLowerCase();
+
+                    if (lowerName.endsWith('.pdf')) {
+                        setProcessStatus('正在解析 PDF 文档结构...');
+                        setFileType('PDF');
+                        text = await readPdfFile(file);
+                    } else if (lowerName.endsWith('.docx')) {
+                        setProcessStatus('正在提取 Word 文档内容...');
+                        setFileType('Word');
+                        text = await readWordFile(file);
+                    } else if (lowerName.endsWith('.txt')) {
+                        setProcessStatus('正在读取文本...');
+                        setFileType('TXT');
+                        text = await readTextFile(file);
+                    } else {
+                        alert('不支持的文件格式，请上传 PDF, Word 或 Txt');
+                        setIsProcessing(false);
+                        setFileName('');
+                        return;
+                    }
+
+                    if (!text || text.trim().length === 0) {
+                        alert('无法提取文件内容，可能是图片型PDF或空文件。');
+                        setIsProcessing(false);
+                        return;
+                    }
+
+                    setContent(text);
+                    setProcessStatus('正在进行智能分析...');
+                    
+                    // 稍微延迟一下，让用户看到状态变化，也给UI渲染时间
+                    setTimeout(() => {
+                        setActiveTab('typo');
+                        runAnalysis(text);
+                    }, 500);
+
+                } catch (error) {
+                    console.error(error);
+                    alert('文件解析失败，请检查文件是否损坏或加密。');
+                    setFileName('');
+                    setIsProcessing(false);
+                }
+            };
+
+            const loadSample = () => {
+                setFileName('演示合同_2024.txt');
+                setFileType('演示');
+                setContent(SAMPLE_CONTRACT);
+                setActiveTab('typo');
+                setIsProcessing(true);
+                setProcessStatus('加载演示数据...');
+                setTimeout(() => runAnalysis(SAMPLE_CONTRACT), 500);
+            };
+
+            const runAnalysis = (text) => {
+                // 1. 错别字
+                const typos = [];
+                TYPO_DATABASE.forEach(rule => {
+                    let match;
+                    if (rule.pattern.global) rule.pattern.lastIndex = 0;
+                    while ((match = rule.pattern.exec(text)) !== null) {
+                        if (rule.context && !text.includes(rule.context)) continue;
+                        typos.push({
+                            id: Math.random().toString(36),
+                            text: match[0],
+                            suggestion: rule.suggestion,
+                            type: rule.type,
+                            index: match.index
+                        });
+                    }
+                });
+
+                // 2. 金额
+                const amounts = [];
+                let match;
+                const numRegex = new RegExp(AMOUNT_REGEX);
+                while ((match = numRegex.exec(text)) !== null) {
+                    amounts.push({ 
+                        original: match[0], 
+                        value: parseFloat(match[0].replace(/,/g, '')), 
+                        type: '数字金额' 
+                    });
+                }
+                const cnRegex = new RegExp(CN_AMOUNT_REGEX);
+                while ((match = cnRegex.exec(text)) !== null) {
+                    amounts.push({ original: match[0], value: 0, type: '大写金额' });
+                }
+
+                // 3. 优化
+                const optimizations = [];
+                OPTIMIZATION_RULES.forEach(rule => {
+                    if (!text.includes(rule.keyword)) {
+                        optimizations.push(rule);
+                    }
+                });
+
+                setAnalysisResults({ typos, amounts, optimizations });
+                setIsProcessing(false);
+            };
+
+            // --- 视图渲染 ---
+
+            const renderUploadView = () => (
+                <div className="flex flex-col items-center justify-center h-full min-h-[400px] p-8 text-center bg-slate-50/50 rounded-xl border-2 border-dashed border-slate-300">
+                    <div className="bg-white p-6 rounded-full shadow-sm mb-6 animate-bounce">
+                        <Upload size={48} className="text-blue-500" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-slate-800 mb-2">上传合同文档</h2>
+                    <p className="text-slate-500 mb-8 max-w-md">
+                        支持 <span className="font-bold text-slate-700">PDF, Word (.docx), TXT</span> 格式。
+                        <br/>所有解析均在本地完成，保障隐私安全。
+                    </p>
+                    
+                    <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+                        <label className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg cursor-pointer font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-200">
+                            <FileText size={18} />
+                            选择文件
+                            <input 
+                                type="file" 
+                                className="hidden" 
+                                accept=".txt,.pdf,.docx" 
+                                onChange={handleFileUpload} 
+                            />
+                        </label>
+                        
+                        <button 
+                            onClick={loadSample}
+                            className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-8 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                            <Sparkles size={18} />
+                            试用演示数据
+                        </button>
+                    </div>
+                </div>
+            );
+
+            const renderTypoView = () => {
+                if (!analysisResults) return null;
+                const { typos } = analysisResults;
+                return (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h3 className="text-lg font-bold mb-4 flex items-center justify-between">
+                                <span className="flex items-center gap-2"><Search className="text-blue-500" /> 智能纠错</span>
+                                <span className={`text-xs px-3 py-1 rounded-full ${typos.length ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                    发现 {typos.length} 处建议
+                                </span>
+                            </h3>
+                            
+                            {typos.length === 0 ? (
+                                <AlertBox type="success" title="文档很干净">未检测到明显的错别字或法律禁用词。</AlertBox>
+                            ) : (
+                                <div className="grid gap-3">
+                                    {typos.map((item, idx) => (
+                                        <div key={idx} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-red-50/50 border border-red-100 rounded-lg hover:bg-red-50 transition-colors">
+                                            <div className="mb-2 sm:mb-0">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="text-red-700 font-bold line-through decoration-red-400 opacity-70">{item.text}</span>
+                                                    <ArrowRight size={14} className="text-gray-400" />
+                                                    <span className="text-green-700 font-bold px-2 py-0.5 bg-green-100 rounded">{item.suggestion}</span>
+                                                </div>
+                                                <p className="text-xs text-red-500 font-medium mt-1 flex items-center gap-1">
+                                                    <AlertTriangle size={10} />
+                                                    {item.type}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderAmountView = () => {
+                if (!analysisResults) return null;
+                const { amounts } = analysisResults;
+                const targetVal = parseFloat(targetAmount) || 0;
+                const matchFound = amounts.some(a => a.value === targetVal);
+                const hasAmounts = amounts.length > 0;
+
+                return (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                                <DollarSign className="text-green-500" /> 金额核对
+                            </h3>
+
+                            <div className="p-4 bg-slate-50 rounded-lg border border-slate-100 mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">输入预期合同总金额（数字）</label>
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="number" 
+                                        value={targetAmount}
+                                        onChange={(e) => setTargetAmount(e.target.value)}
+                                        placeholder="例如：50000"
+                                        className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                    />
+                                    <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 rounded-lg font-medium transition-colors">
+                                        核对
+                                    </button>
+                                </div>
+                            </div>
+
+                            {targetAmount && (
+                                matchFound ? (
+                                    <AlertBox type="success" title="匹配成功">文档中包含金额 <b>{targetAmount}</b>。</AlertBox>
+                                ) : (
+                                    <AlertBox type="warning" title="未找到匹配项">文档中似乎没有找到与 <b>{targetAmount}</b> 完全匹配的数字金额。</AlertBox>
+                                )
+                            )}
+
+                            <div className="mt-6">
+                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">文中提取到的金额</h4>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {hasAmounts ? amounts.map((amt, idx) => (
+                                        <div key={idx} className="flex justify-between items-center p-3 bg-white border border-gray-200 rounded-lg hover:border-blue-300 transition-colors">
+                                            <span className="font-mono text-gray-800 font-medium truncate">{amt.original}</span>
+                                            <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-1 rounded border border-gray-200">{amt.type}</span>
+                                        </div>
+                                    )) : <p className="text-gray-400 italic text-sm">暂无数据</p>}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderOptimizeView = () => {
+                if (!analysisResults) return null;
+                const { optimizations } = analysisResults;
+
+                return (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                                <Sparkles className="text-purple-500" /> 条款完整性检查
+                            </h3>
+                            
+                            <div className="grid gap-4">
+                                {optimizations.length === 0 ? (
+                                    <AlertBox type="success" title="结构完整">常用关键条款（如不可抗力、违约责任等）均已检测到。</AlertBox>
+                                ) : (
+                                    optimizations.map((opt, idx) => (
+                                        <AlertBox key={idx} type="warning" title={`缺失：${opt.keyword}`}>
+                                            {opt.message}
+                                        </AlertBox>
+                                    ))
+                                )}
+                                
+                                <div className="p-4 bg-purple-50 rounded-lg border border-purple-100 mt-2">
+                                    <h4 className="font-bold text-purple-900 mb-2 text-sm flex items-center gap-2"><ShieldCheck size={16}/> 通用建议</h4>
+                                    <ul className="list-disc list-inside text-sm text-purple-800 space-y-1 opacity-80">
+                                        <li>检查合同签署日期是否明确。</li>
+                                        <li>涉及跨地区合作时，明确管辖法院。</li>
+                                        <li>确认所有“附件”均已齐全。</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderActiveView = () => {
+                if (isProcessing) {
+                    return (
+                        <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-gray-500">
+                            <RefreshCw className="animate-spin mb-4 text-blue-500" size={40} />
+                            <p className="font-medium text-slate-800">{processStatus}</p>
+                            <p className="text-xs text-slate-400 mt-2">大文件可能需要几秒钟处理时间</p>
+                        </div>
+                    );
+                }
+                
+                switch(activeTab) {
+                    case 'upload': return renderUploadView();
+                    case 'typo': return renderTypoView();
+                    case 'amount': return renderAmountView();
+                    case 'optimize': return renderOptimizeView();
+                    default: return renderUploadView();
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+                    {/* 顶部导航 */}
+                    <header className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-20 shadow-sm">
+                        <div className="max-w-7xl mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-blue-600 p-2 rounded-lg text-white shadow-lg shadow-blue-200">
+                                    <FileSearch size={24} />
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold tracking-tight text-slate-800">合同卫士 Pro</h1>
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Contract Guard</p>
+                                </div>
+                            </div>
+                            
+                            {fileName && (
+                                <div className="flex items-center gap-4">
+                                    <div className="hidden sm:flex items-center gap-2 text-xs px-3 py-1 bg-slate-100 rounded-full text-slate-600 border border-slate-200">
+                                        <FileType size={12} className="text-blue-500" />
+                                        <span>{fileType}</span>
+                                        <span className="w-px h-3 bg-slate-300 mx-1"></span>
+                                        <span className="font-semibold text-slate-900 max-w-[150px] truncate">{fileName}</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => { setFileName(''); setContent(''); setActiveTab('upload'); setAnalysisResults(null); }}
+                                        className="text-xs sm:text-sm text-red-500 hover:text-red-700 font-medium hover:bg-red-50 px-3 py-1.5 rounded-md transition-colors"
+                                    >
+                                        重新上传
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </header>
+
+                    {/* 主内容区 */}
+                    <main className="flex-1 max-w-7xl mx-auto w-full p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        {fileName && (
+                            <aside className="lg:col-span-4 space-y-4 animate-fade-in">
+                                <div className="sticky top-24 space-y-4">
+                                    <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">核心功能</h2>
+                                    <FeatureCard 
+                                        title="错别字纠察" 
+                                        description="识别重复字、敏感词及法律用语错误"
+                                        icon={Search} 
+                                        active={activeTab === 'typo'}
+                                        onClick={() => setActiveTab('typo')}
+                                    />
+                                    <FeatureCard 
+                                        title="金额核对" 
+                                        description="提取文中金额与预期总额比对"
+                                        icon={DollarSign} 
+                                        active={activeTab === 'amount'}
+                                        onClick={() => setActiveTab('amount')}
+                                    />
+                                    <FeatureCard 
+                                        title="条款优化" 
+                                        description="基于条款完整性的智能建议"
+                                        icon={Sparkles} 
+                                        active={activeTab === 'optimize'}
+                                        onClick={() => setActiveTab('optimize')}
+                                    />
+                                    
+                                    <div className="hidden lg:block pt-4 border-t border-slate-200 mt-6">
+                                        <div className="flex items-center justify-between mb-2">
+                                             <h3 className="text-xs font-bold text-slate-800">提取的文本内容</h3>
+                                             <span className="text-[10px] text-slate-400">仅用于本地分析</span>
+                                        </div>
+                                        <div className="bg-white border border-slate-200 rounded-lg p-3 h-64 overflow-y-auto text-[10px] text-slate-600 font-mono whitespace-pre-wrap leading-relaxed shadow-inner">
+                                            {content}
+                                        </div>
+                                    </div>
+                                </div>
+                            </aside>
+                        )}
+
+                        <section className={`${fileName ? 'lg:col-span-8' : 'lg:col-span-12'}`}>
+                            <div className="bg-white min-h-[500px] rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-8">
+                                {renderActiveView()}
+                            </div>
+                        </section>
+                    </main>
+
+                    {/* 页脚 */}
+                    <footer className="py-6 text-center text-slate-400 text-xs border-t border-slate-100 mt-auto">
+                        <p>© 2024 合同卫士 Pro - 支持 PDF/Word/Txt - 纯前端本地化处理</p>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
