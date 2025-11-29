@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>合同智能自查助手 (Contract Auditor Pro)</title>
+    
+    <!-- 样式库：Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 图标库：Lucide -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Word 解析库：Mammoth.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    
+    <!-- PDF 解析库：PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+    <!-- 字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Noto Sans SC', sans-serif; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .loading-overlay { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(2px); }
+    </style>
+
+    <script>
+        // 配置 PDF.js Worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen pb-10">
+
+    <!-- 顶部导航 -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="bg-blue-600 text-white p-2 rounded-lg shadow-md">
+                    <i data-lucide="file-check-2" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-slate-900 tracking-tight">合同智查 <span class="text-xs font-normal text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full ml-1">Pro版</span></h1>
+                </div>
+            </div>
+            <button onclick="loadSample()" class="text-sm bg-blue-50 text-blue-700 px-4 py-2 rounded-lg font-medium hover:bg-blue-100 flex items-center transition-all">
+                <i data-lucide="sparkles" class="w-4 h-4 mr-2"></i> 载入演示样本
+            </button>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            <!-- 左侧：文档操作区 -->
+            <div class="lg:col-span-7 flex flex-col space-y-6">
+                
+                <!-- 上传卡片 -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
+                    <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                        <h2 class="text-sm font-bold text-slate-700 flex items-center uppercase tracking-wide">
+                            <i data-lucide="upload-cloud" class="w-4 h-4 mr-2 text-blue-500"></i>
+                            文档导入 (支持 .docx, .pdf)
+                        </h2>
+                        <div id="fileInfoBadge" class="hidden items-center bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">
+                            <span id="fileTypeTag" class="text-[10px] text-white px-1.5 py-0.5 rounded mr-2 font-bold bg-slate-400">TXT</span>
+                            <span id="fileNameDisplay" class="text-xs text-slate-600 truncate max-w-[150px]">filename.txt</span>
+                        </div>
+                    </div>
+
+                    <div class="p-0 relative group min-h-[400px]">
+                        <!-- 文本编辑器 -->
+                        <textarea id="contractInput"
+                            class="w-full h-[400px] p-6 border-none focus:ring-0 resize-none text-sm text-slate-600 font-mono leading-relaxed bg-white outline-none"
+                            placeholder="请点击下方按钮上传 Word/PDF 合同，解析后的文字将显示在这里..."
+                            oninput="handleTextInput()"></textarea>
+                        
+                        <!-- 空状态提示 (当textarea为空时显示) -->
+                        <div id="emptyStateOverlay" class="absolute inset-0 flex flex-col items-center justify-center bg-white/60 pointer-events-none backdrop-blur-[1px]">
+                            <div class="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4 border border-blue-100">
+                                <i data-lucide="file-up" class="w-8 h-8 text-blue-400"></i>
+                            </div>
+                            <p class="text-slate-600 font-bold">点击上传或拖拽文件</p>
+                            <p class="text-xs text-slate-400 mt-2">真实解析 Word (.docx) 和 PDF 文本</p>
+                        </div>
+
+                        <!-- 真实文件输入框 -->
+                        <input type="file" id="fileInput" 
+                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            onchange="handleRealFileUpload(this)"
+                            accept=".txt,.docx,.pdf">
+
+                        <!-- 加载遮罩 -->
+                        <div id="parsingLoader" class="hidden absolute inset-0 loading-overlay flex-col items-center justify-center z-10">
+                            <i data-lucide="loader-2" class="w-10 h-10 text-blue-600 animate-spin mb-3"></i>
+                            <p class="text-sm font-medium text-slate-700" id="loadingText">正在解析文档内容...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 底部栏 -->
+                    <div class="bg-slate-50 px-4 py-3 border-t border-slate-100 flex justify-between items-center">
+                        <button class="text-xs font-medium text-slate-600 hover:text-blue-600 flex items-center transition-colors pointer-events-none">
+                            <i data-lucide="folder-open" class="w-3.5 h-3.5 mr-1.5"></i> 选择本地文件
+                        </button>
+                        <div class="text-[10px] text-slate-400 flex items-center">
+                            <i data-lucide="shield-check" class="w-3 h-3 mr-1 text-green-500"></i>
+                            文件仅在本地浏览器解析，不上传服务器
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 校验参数 -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-sm font-bold text-slate-700 flex items-center uppercase tracking-wide">
+                            <i data-lucide="sliders-horizontal" class="w-4 h-4 mr-2 text-blue-500"></i>
+                            自查参数
+                        </h2>
+                    </div>
+                    <div class="flex items-end gap-4">
+                        <div class="flex-1">
+                            <label class="block text-xs font-medium text-slate-500 mb-1.5">预期合同总金额 (元)</label>
+                            <div class="relative">
+                                <span class="absolute left-3 top-2.5 text-slate-400 font-serif">¥</span>
+                                <input type="number" id="expectedAmount"
+                                    class="pl-8 block w-full rounded-lg border-slate-300 border py-2.5 px-3 focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium transition-shadow"
+                                    placeholder="例如：500000">
+                            </div>
+                        </div>
+                        <button id="analyzeBtn" onclick="runAnalysis()"
+                            class="px-8 py-2.5 rounded-lg text-white font-bold text-sm shadow-md transition-all flex items-center justify-center bg-blue-600 hover:bg-blue-700 hover:shadow-lg disabled:bg-slate-300 disabled:cursor-not-allowed min-w-[140px]">
+                            <i data-lucide="search" class="w-4 h-4 mr-2"></i> 开始审查
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：结果面板 -->
+            <div class="lg:col-span-5 h-full min-h-[600px]">
+                <div id="resultsPanel" class="bg-white rounded-xl shadow-lg border border-slate-200 h-full overflow-hidden flex flex-col relative">
+                    
+                    <!-- 初始空状态 -->
+                    <div id="initialState" class="absolute inset-0 flex flex-col items-center justify-center p-10 text-center bg-slate-50/30">
+                        <div class="w-20 h-20 bg-white rounded-full flex items-center justify-center mb-6 shadow-sm border border-slate-100">
+                            <i data-lucide="scan-line" class="w-10 h-10 text-slate-300"></i>
+                        </div>
+                        <h3 class="text-lg font-bold text-slate-800 mb-2">等待文档导入</h3>
+                        <p class="text-sm text-slate-500 max-w-[200px] leading-relaxed">
+                            请上传合同文件，系统将提取文本并进行合规性、错别字及金额三维扫描。
+                        </p>
+                    </div>
+
+                    <!-- 分析结果 -->
+                    <div id="analysisContent" class="hidden flex-col h-full w-full fade-in">
+                        <!-- 内容动态生成 -->
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- JavaScript 逻辑 -->
+    <script>
+        // --- 核心词库数据 ---
+        const COMMON_TYPOS = [
+            { wrong: '订金', right: '定金', context: '注意区分：“定金”含担保性质，违约双倍返还；“订金”通常视为预付款。' },
+            { wrong: '权力', right: '权利', context: '合同语境通常指民事“权利”（Rights），而非行政“权力”（Power）。' },
+            { wrong: '截止', right: '截至', context: '“截止”指时刻（到此为止）；“截至”强调统计的时间段（截止到）。' },
+            { wrong: '其它', right: '其他', context: '法律文书规范用语通常使用“其他”。' },
+            { wrong: '帐号', right: '账号', context: '现代规范用语应为“账号”。' },
+            { wrong: '签定', right: '签订', context: '签署协议、合同应使用“签订”。' }
+        ];
+
+        const ESSENTIAL_CLAUSES = [
+            { keyword: ['不可抗力', '自然灾害'], name: '不可抗力条款', suggestion: '缺失此条款可能导致遇到天灾时无法免除违约责任。' },
+            { keyword: ['争议', '仲裁', '法院', '管辖'], name: '争议解决条款', suggestion: '未约定争议解决方式（法院/仲裁）易导致管辖权异议，增加维权成本。' },
+            { keyword: ['保密', '泄露'], name: '保密条款', suggestion: '涉及商业合作，建议增加保密义务及违约惩罚机制。' },
+            { keyword: ['违约责任', '赔偿'], name: '违约责任条款', suggestion: '“无责任即无义务”，必须明确违约金计算方式。' }
+        ];
+
+        let state = {
+            contractText: '',
+            fileName: '',
+            results: null,
+            activeTab: 'summary'
+        };
+
+        // 初始化图标
+        lucide.createIcons();
+
+        // --- 核心文件解析逻辑 ---
+
+        async function handleRealFileUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            // UI 状态更新
+            showLoader(true, '正在读取文件...');
+            state.fileName = file.name;
+            updateFileBadge(file.name);
+            state.contractText = '';
+
+            try {
+                let extractedText = "";
+
+                if (file.name.toLowerCase().endsWith('.docx')) {
+                    // 解析 Word (.docx)
+                    updateLoaderText('正在解析 Word 文档...');
+                    extractedText = await parseDocx(file);
+                } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                    // 解析 PDF
+                    updateLoaderText('正在解析 PDF 文档...');
+                    extractedText = await parsePdf(file);
+                } else if (file.type === 'text/plain') {
+                    // 解析 TXT
+                    extractedText = await readTextFile(file);
+                } else {
+                    throw new Error("不支持的文件格式，仅支持 .docx, .pdf, .txt");
+                }
+
+                // 解析成功
+                state.contractText = extractedText;
+                document.getElementById('contractInput').value = extractedText;
+                toggleEmptyState(false);
+                showLoader(false);
+                
+                // 提示用户
+                if (!extractedText.trim()) {
+                    alert("警告：未能从文档中提取到文字。\n\n如果是扫描版 PDF（纯图片），浏览器无法识别文字，请使用可编辑文档。");
+                }
+
+            } catch (error) {
+                console.error(error);
+                showLoader(false);
+                alert(`解析失败: ${error.message}\n\n提示：对于 Word 请确保是 .docx 格式；对于 PDF 请确保不是纯图片扫描件。`);
+                resetFileState();
+            }
+        }
+
+        // 1. 解析 .docx (使用 Mammoth.js)
+        function parseDocx(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const arrayBuffer = event.target.result;
+                    mammoth.extractRawText({ arrayBuffer: arrayBuffer })
+                        .then(result => resolve(result.value))
+                        .catch(err => reject(err));
+                };
+                reader.onerror = reject;
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        // 2. 解析 .pdf (使用 PDF.js)
+        async function parsePdf(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+            const pdf = await loadingTask.promise;
+            
+            let fullText = '';
+            const totalPages = pdf.numPages;
+
+            for (let i = 1; i <= totalPages; i++) {
+                updateLoaderText(`正在解析 PDF 第 ${i}/${totalPages} 页...`);
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                fullText += `\n--- 第 ${i} 页 ---\n` + pageText + '\n';
+            }
+            
+            return fullText;
+        }
+
+        // 3. 读取纯文本
+        function readTextFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = reject;
+                reader.readAsText(file);
+            });
+        }
+
+        // --- UI 辅助函数 ---
+
+        function showLoader(show, text = '') {
+            const loader = document.getElementById('parsingLoader');
+            const overlay = document.getElementById('emptyStateOverlay');
+            if (show) {
+                loader.classList.remove('hidden');
+                loader.classList.add('flex');
+                overlay.classList.add('hidden'); // 加载时隐藏空状态图
+                if(text) updateLoaderText(text);
+            } else {
+                loader.classList.add('hidden');
+                loader.classList.remove('flex');
+            }
+        }
+
+        function updateLoaderText(text) {
+            document.getElementById('loadingText').textContent = text;
+        }
+
+        function handleTextInput() {
+            const textarea = document.getElementById('contractInput');
+            state.contractText = textarea.value;
+            toggleEmptyState(state.contractText === '');
+            if(!state.fileName && state.contractText) {
+                 document.getElementById('fileInput').classList.add('hidden');
+            }
+        }
+
+        function toggleEmptyState(isEmpty) {
+            const overlay = document.getElementById('emptyStateOverlay');
+            const fileInput = document.getElementById('fileInput');
+            if (isEmpty) {
+                overlay.classList.remove('hidden');
+                fileInput.classList.remove('hidden');
+            } else {
+                overlay.classList.add('hidden');
+                fileInput.classList.add('hidden'); // 隐藏全屏input以允许选中文本
+            }
+        }
+
+        function updateFileBadge(name) {
+            const badge = document.getElementById('fileInfoBadge');
+            const nameEl = document.getElementById('fileNameDisplay');
+            const typeEl = document.getElementById('fileTypeTag');
+            
+            badge.classList.remove('hidden');
+            badge.classList.add('flex');
+            nameEl.textContent = name;
+            
+            if (name.toLowerCase().endsWith('.pdf')) {
+                typeEl.textContent = 'PDF';
+                typeEl.className = 'text-[10px] text-white px-1.5 py-0.5 rounded mr-2 font-bold bg-red-500';
+            } else if (name.match(/\.(docx)$/i)) {
+                typeEl.textContent = 'DOCX';
+                typeEl.className = 'text-[10px] text-white px-1.5 py-0.5 rounded mr-2 font-bold bg-blue-500';
+            } else {
+                typeEl.textContent = 'TXT';
+                typeEl.className = 'text-[10px] text-white px-1.5 py-0.5 rounded mr-2 font-bold bg-slate-400';
+            }
+        }
+
+        function resetFileState() {
+            document.getElementById('fileInput').value = '';
+            document.getElementById('contractInput').value = '';
+            state.contractText = '';
+            state.fileName = '';
+            document.getElementById('fileInfoBadge').classList.add('hidden');
+            toggleEmptyState(true);
+        }
+
+        function loadSample() {
+            const sample = `合同编号：2023-SAMPLE-001\n\n甲方：模拟科技公司\n乙方：测试建设集团\n\n一、概述\n双方就软件园项目签定本协议。\n\n二、金额\n总金额为人民币500,000元（大写：伍拾万元整）。\n订金为总金额的20%。\n\n三、条款\n1. 甲方有权力监督。\n2. 截止2024年完工。\n3. 如有其它问题协商解决。`;
+            document.getElementById('contractInput').value = sample;
+            state.contractText = sample;
+            state.fileName = '演示样本.txt';
+            updateFileBadge('演示样本.txt');
+            toggleEmptyState(false);
+            document.getElementById('expectedAmount').value = 500000;
+            // 自动触发
+            setTimeout(runAnalysis, 300);
+        }
+
+        // --- 分析逻辑 (保持不变) ---
+
+        function runAnalysis() {
+            if (!state.contractText) return;
+
+            const btn = document.getElementById('analyzeBtn');
+            const originalContent = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<i data-lucide="loader-2" class="animate-spin w-4 h-4 mr-2"></i> 分析中...`;
+            lucide.createIcons();
+
+            setTimeout(() => {
+                const text = state.contractText;
+                
+                // 1. 错别字
+                const typos = [];
+                COMMON_TYPOS.forEach(item => {
+                    if (text.includes(item.wrong)) {
+                        typos.push({ ...item, contextSnippet: `...${item.wrong}...` });
+                    }
+                });
+
+                // 2. 金额
+                const moneyMatches = [];
+                const digitRegex = /[\d,]+(\.\d+)?(?=\s*元)/g;
+                const matches = text.match(digitRegex);
+                if(matches) {
+                    matches.forEach((raw, idx) => {
+                        moneyMatches.push({ raw, value: parseFloat(raw.replace(/,/g, '')), index: idx });
+                    });
+                }
+
+                // 3. 条款
+                const missing = [];
+                ESSENTIAL_CLAUSES.forEach(clause => {
+                    const hasKey = clause.keyword.some(k => text.includes(k));
+                    if (!hasKey) missing.push(clause);
+                });
+
+                const score = Math.max(0, 100 - (typos.length * 5) - (missing.length * 10));
+                state.results = { typos, money: moneyMatches, optimization: missing, score };
+                
+                renderResults();
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+                lucide.createIcons();
+            }, 800);
+        }
+
+        function switchTab(tabId) {
+            state.activeTab = tabId;
+            renderResults();
+        }
+
+        function renderResults() {
+            const container = document.getElementById('resultsPanel');
+            const initial = document.getElementById('initialState');
+            const content = document.getElementById('analysisContent');
+            
+            initial.classList.add('hidden');
+            content.classList.remove('hidden');
+            content.classList.add('flex');
+
+            const r = state.results;
+            const expAmount = parseFloat(document.getElementById('expectedAmount').value) || 0;
+            const amountStatus = r.money.some(m => Math.abs(m.value - expAmount) < 0.01) ? 'success' : 'danger';
+            
+            let html = `
+                <div class="p-6 bg-gradient-to-br from-slate-50 to-white border-b border-slate-100 flex-none">
+                    <div class="flex justify-between items-end mb-4">
+                        <div>
+                            <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">健康指数</p>
+                            <div class="text-4xl font-black ${r.score >= 90 ? 'text-green-500' : r.score >= 60 ? 'text-amber-500' : 'text-red-500'}">${r.score}</div>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-xs text-slate-500 mb-1">风险项</p>
+                            <p class="text-lg font-bold text-slate-800">${r.typos.length + r.optimization.length + (amountStatus === 'success' ? 0 : 1)}</p>
+                        </div>
+                    </div>
+                    <div class="w-full bg-slate-100 rounded-full h-2">
+                        <div class="h-full rounded-full transition-all duration-1000 ${r.score >= 90 ? 'bg-green-500' : r.score >= 60 ? 'bg-amber-500' : 'bg-red-500'}" style="width: ${r.score}%"></div>
+                    </div>
+                </div>
+
+                <div class="flex border-b border-slate-200 bg-white flex-none">
+                    ${renderTabButton('summary', '总览', 'bar-chart-2', 0)}
+                    ${renderTabButton('typos', '纠错', 'alert-circle', r.typos.length)}
+                    ${renderTabButton('amount', '金额', 'coins', 0, amountStatus === 'danger')}
+                    ${renderTabButton('optimize', '优化', 'lightbulb', r.optimization.length)}
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-5 bg-slate-50/50 scroll-smooth">
+                    ${renderTabContent(expAmount, amountStatus)}
+                </div>
+            `;
+            content.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        function renderTabButton(id, label, icon, count, alert = false) {
+            const isActive = state.activeTab === id;
+            const activeClass = isActive ? 'border-blue-500 text-blue-600 bg-blue-50/30' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50';
+            return `<button onclick="switchTab('${id}')" class="flex-1 py-3 text-[13px] font-bold flex items-center justify-center border-b-[3px] transition-all ${activeClass}">
+                <i data-lucide="${icon}" class="w-4 h-4 mr-1.5 ${alert ? 'text-red-500' : ''}"></i>${label}
+                ${count > 0 ? `<span class="ml-1.5 bg-red-100 text-red-600 text-[10px] px-1.5 py-0.5 rounded-full">${count}</span>` : ''}
+            </button>`;
+        }
+
+        function renderTabContent(expAmount, amountStatus) {
+            const r = state.results;
+            if (state.activeTab === 'summary') {
+                return `<div class="space-y-3 fade-in">
+                    <div class="p-4 rounded-xl border ${amountStatus === 'success' ? 'bg-green-50/50 border-green-100' : 'bg-red-50/50 border-red-100'}">
+                        <div class="flex items-center mb-1">
+                            <i data-lucide="${amountStatus === 'success' ? 'check-circle' : 'x-circle'}" class="w-4 h-4 mr-2 ${amountStatus === 'success' ? 'text-green-600' : 'text-red-600'}"></i>
+                            <span class="font-bold text-sm ${amountStatus === 'success' ? 'text-green-800' : 'text-red-800'}">${amountStatus === 'success' ? '金额一致' : '金额不匹配'}</span>
+                        </div>
+                        <p class="text-xs text-slate-600 ml-6">预期: ¥${expAmount.toLocaleString()}</p>
+                    </div>
+                    <div class="bg-white rounded-xl border border-slate-200 p-4">
+                        <div class="flex justify-between items-center text-sm border-b border-slate-50 pb-2 mb-2">
+                            <span class="text-slate-600">错别字检查</span>
+                            <span class="${r.typos.length ? 'text-red-500' : 'text-green-500'} font-bold">${r.typos.length ? r.typos.length + ' 处' : '合格'}</span>
+                        </div>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-slate-600">条款完整度</span>
+                            <span class="${r.optimization.length ? 'text-amber-500' : 'text-green-500'} font-bold">${r.optimization.length ? '缺 ' + r.optimization.length + ' 项' : '完备'}</span>
+                        </div>
+                    </div>
+                </div>`;
+            } else if (state.activeTab === 'typos') {
+                if(!r.typos.length) return emptyState('check-check', 'text-green-500', '太棒了，未发现常见易错词');
+                return `<div class="space-y-3 fade-in">${r.typos.map(t => `
+                    <div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex items-center space-x-2 mb-2">
+                            <span class="px-2 bg-red-50 text-red-600 text-xs rounded line-through">${t.wrong}</span>
+                            <i data-lucide="arrow-right" class="w-3 h-3 text-slate-300"></i>
+                            <span class="px-2 bg-green-50 text-green-600 text-xs rounded font-bold">${t.right}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500">${t.context}</p>
+                    </div>`).join('')}</div>`;
+            } else if (state.activeTab === 'amount') {
+                if(!r.money.length) return emptyState('search-x', 'text-slate-400', '未提取到数字金额');
+                return `<div class="space-y-2 fade-in">${r.money.map(m => {
+                    const match = Math.abs(m.value - expAmount) < 0.01;
+                    return `<div class="p-3 bg-white border rounded-lg flex justify-between ${match ? 'border-green-300 bg-green-50/30' : 'border-slate-200'}">
+                        <span class="text-sm font-mono font-bold">${m.raw}</span>
+                        ${match ? '<span class="text-xs text-green-600 bg-green-100 px-2 rounded-full">匹配</span>' : ''}
+                    </div>`;
+                }).join('')}</div>`;
+            } else if (state.activeTab === 'optimize') {
+                if(!r.optimization.length) return emptyState('thumbs-up', 'text-blue-500', '条款完备');
+                return `<div class="space-y-3 fade-in">${r.optimization.map(o => `
+                    <div class="bg-white p-3 rounded-xl border-l-[3px] border-amber-400 shadow-sm">
+                        <h5 class="font-bold text-sm mb-1 flex items-center"><i data-lucide="alert-triangle" class="w-3 h-3 mr-1 text-amber-500"></i>建议补充：${o.name}</h5>
+                        <p class="text-xs text-slate-500">${o.suggestion}</p>
+                    </div>`).join('')}</div>`;
+            }
+        }
+
+        function emptyState(icon, color, text) {
+            return `<div class="text-center py-10 fade-in"><i data-lucide="${icon}" class="w-8 h-8 mx-auto mb-2 ${color}"></i><p class="text-xs text-slate-400">${text}</p></div>`;
+        }
+    </script>
+</body>
+</html>
